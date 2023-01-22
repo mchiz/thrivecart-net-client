@@ -1,4 +1,5 @@
 ﻿using Newtonsoft.Json;
+using System.Collections.Generic;
 using System.Net;
 using System.Web;
 using static System.Runtime.InteropServices.JavaScript.JSType;
@@ -8,21 +9,18 @@ namespace ThriveCart {
         public Client( string apiKey, ConnectionMode mode ) {
             _httpClient.DefaultRequestHeaders.Add( "Authorization", "Bearer " + apiKey );
             _httpClient.DefaultRequestHeaders.Add( "X-TC-Mode", mode == ConnectionMode.Live ? "live" : "test" );
-            _httpClient.DefaultRequestHeaders.Add( "X-TC-Sdk", SdkVersion );
-            _httpClient.DefaultRequestHeaders.Add( "X-TC-Version", ApiVersion );
+            _httpClient.DefaultRequestHeaders.Add( "X-TC-Sdk", _sdkVersion );
+            _httpClient.DefaultRequestHeaders.Add( "X-TC-Version", _apiVersion );
         }
 
-        public async Task< Customer > GetCustomerDataAsync( string emailAddress ) {
+        public async Task< Customer > GetCustomerDataAsync( string emailAddress, CancellationToken cancellationToken = default ) {
             string target = "https://thrivecart.com/api/external/customer";
 
             var content = new FormUrlEncodedContent( new[ ] {
                 new KeyValuePair< string, string >( "email", emailAddress ),
             }  );
 
-            using var result = await _httpClient.PostAsync( target, content );
-
-            if( !result.IsSuccessStatusCode )
-                throw new Exception( $"{result.ReasonPhrase} - {result.StatusCode}" );
+            using var result = await PostAsync( target, content, cancellationToken );
 
             string jsonData = await result.Content.ReadAsStringAsync( );
 
@@ -31,22 +29,19 @@ namespace ThriveCart {
             return data;
         }
 
-        public async Task< PricingOption[ ] > GetProductPricingOptionsAsync( int productId ) {
+        public async Task< PricingOption[ ] > GetProductPricingOptionsAsync( int productId, CancellationToken cancellationToken = default ) {
             string target = $"https://thrivecart.com/api/external/products/{productId}/pricing_options";
             
-            using var result = await _httpClient.GetAsync( target );
+            using var result = await GetAsync( target, cancellationToken );
 
-            if( !result.IsSuccessStatusCode )
-                throw new Exception( $"{result.ReasonPhrase} - {result.StatusCode}" );
-
-            string jsonData = await result.Content.ReadAsStringAsync( );
+            string jsonData = await result.Content.ReadAsStringAsync( cancellationToken );
 
             var data = Newtonsoft.Json.JsonConvert.DeserializeObject< PricingOption[ ] >( jsonData );
 
             return data;
         }
 
-        public async Task< Transaction[ ] > GetTransactionsAsync( DateTime from, DateTime to, TransactionsFilter filter = default ) {
+        public async Task< Transaction[ ] > GetTransactionsAsync( DateTime from, DateTime to, TransactionsFilter filter = default, CancellationToken cancellationToken = default ) {
             if( to < from )
                 throw new ArgumentException( "'from' has to be older than 'to'", "from" );
 
@@ -70,10 +65,7 @@ namespace ThriveCart {
             do {
                 string target = $"https://thrivecart.com/api/external/transactions?page={page}&perPage={transactionsPerPage}{tt}{ccf}";
 
-                using var result = await _httpClient.GetAsync( target );
-
-                if( !result.IsSuccessStatusCode )
-                    throw new Exception( $"{result.ReasonPhrase} - {result.StatusCode}" );
+                using var result = await GetAsync( target, cancellationToken );
 
                 ++page;
 
@@ -87,8 +79,11 @@ namespace ThriveCart {
                     var first = trd.transactions[ 0 ];
                     var last = trd.transactions[ trd.transactions.Length - 1 ];
 
-                    addAll = first.Time >= from && first.Time <= to &&
-                             last.Time  >= from && last.Time  <= to;
+                    var firstDate = DateTimeOffset.FromUnixTimeSeconds( first.TimeStamp ).LocalDateTime;
+                    var lastDate = DateTimeOffset.FromUnixTimeSeconds( last.TimeStamp ).LocalDateTime;
+
+                    addAll = firstDate >= from && firstDate <= to &&
+                             lastDate  >= from && lastDate  <= to;
 
                 }
 
@@ -100,11 +95,12 @@ namespace ThriveCart {
                 } else {
                     for( int i = 0; i < trd.transactions.Length; ++i ) {
                         var t = trd.transactions[ i ];
+                        var date = DateTimeOffset.FromUnixTimeSeconds( t.TimeStamp ).LocalDateTime;
 
-                        if( t.Time >= from && t.Time <= to ) {
+                        if( date >= from && date <= to ) {
                             transactions.Add( t );
 
-                        } else if( t.Time < from ) {
+                        } else if( date < from ) {
                             finished = true;
                             break;
 
@@ -120,15 +116,12 @@ namespace ThriveCart {
             return transactions.ToArray( );
         }
 
-        public async Task < Product[ ] > GetAllProductsAsync( ) {
+        public async Task < Product[ ] > GetAllProductsAsync( CancellationToken cancellationToken = default ) {
             string target = "https://thrivecart.com/api/external/products";
             
-            using var result = await _httpClient.GetAsync( target );
+            using var result = await GetAsync( target, cancellationToken );
 
-            if( !result.IsSuccessStatusCode )
-                throw new Exception( $"{result.ReasonPhrase} - {result.StatusCode}" );
-
-            string jsonData = await result.Content.ReadAsStringAsync( );
+            string jsonData = await result.Content.ReadAsStringAsync( cancellationToken );
 
             var settings = new JsonSerializerSettings {
                 NullValueHandling = NullValueHandling.Ignore,
@@ -137,6 +130,37 @@ namespace ThriveCart {
 
             return Newtonsoft.Json.JsonConvert.DeserializeObject< Product[ ] >( jsonData, settings );
 
+        }
+
+        async Task< HttpResponseMessage > GetAsync( string target, CancellationToken cancellationToken = default ) {
+            var result = await _httpClient.GetAsync( target, cancellationToken );
+
+            if( !result.IsSuccessStatusCode ) {
+                if( result.StatusCode == HttpStatusCode.TooManyRequests ) {
+                    await Task.Delay( _tooManyTriesDelay, cancellationToken );
+
+                    return await GetAsync( target, cancellationToken );
+                }
+
+                throw new Exception( $"{result.ReasonPhrase} - {result.StatusCode}" );
+            }
+
+            return result;
+        }
+        async Task< HttpResponseMessage > PostAsync( string target, HttpContent content, CancellationToken cancellationToken = default ) {
+            var result = await _httpClient.PostAsync( target, content, cancellationToken );
+
+            if( !result.IsSuccessStatusCode ) {
+                if( result.StatusCode == HttpStatusCode.TooManyRequests ) {
+                    await Task.Delay( _tooManyTriesDelay, cancellationToken );
+
+                    return await PostAsync( target, content, cancellationToken );
+                }
+
+                throw new Exception( $"{result.ReasonPhrase} - {result.StatusCode}" );
+            }
+
+            return result;
         }
 
         void IDisposable.Dispose( ) {
@@ -150,8 +174,8 @@ namespace ThriveCart {
 
         HttpClient _httpClient = new HttpClient( );
         
-        readonly string SdkVersion = "1.0.11";
-        readonly string ApiVersion = "1.0.0";
+        readonly string _sdkVersion = "1.0.11";
+        readonly string _apiVersion = "1.0.0";
 
         readonly static Dictionary< TransactionType, string > _transactionTypeFilters = new Dictionary< TransactionType, string >( ) {
             { TransactionType.Any,       "&transactionType=any" },
@@ -160,5 +184,7 @@ namespace ThriveCart {
             { TransactionType.Refund, "&transactionType=refund" },
             { TransactionType.Cancel, "&transactionType=cancel" },
         };
+
+        const int _tooManyTriesDelay = 10000;
     }
 }

@@ -17,7 +17,7 @@ namespace ThriveCart {
         [ JsonProperty( "base_product" ) ] public int BaseProduct;
         [ JsonProperty( "date" ) ] public DateTime Date;
         [ JsonProperty( "time" ) ] public DateTime Time;
-        [ JsonProperty( "timestamp" ) ] public ulong TimeStamp;
+        [ JsonProperty( "timestamp" ) ] public long TimeStamp;
         [ JsonProperty( "transaction_type" ) ] public string TransactionType;
         [ JsonProperty( "transaction_info" ) ] public string TransactionInfo;
         [ JsonProperty( "item_type" ) ] public string ItemType;
@@ -29,7 +29,7 @@ namespace ThriveCart {
         [ JsonProperty( "internal_subscription_id" ) ] public string InternalSubscriptionId;
         [ JsonProperty( "transaction_id" ) ] public string TransactionId;
         [ JsonProperty( "amount" ) ] public int Amount;
-        [ JsonProperty( "order_id" ) ] public ulong OrderId;
+        [ JsonProperty( "order_id" ) ] public long OrderId;
         [ JsonProperty( "invoice_id" ) ] public int InvoiceId;
         [ JsonProperty( "currency" ) ] public string Currency;
         [ JsonProperty( "processor" ) ] public string Processor;
