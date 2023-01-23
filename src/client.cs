@@ -22,7 +22,7 @@ namespace ThriveCart {
 
             using var result = await PostAsync( target, content, cancellationToken );
 
-            string jsonData = await result.Content.ReadAsStringAsync( );
+            string jsonData = await result.Content.ReadAsStringAsync( cancellationToken );
 
             var data = Newtonsoft.Json.JsonConvert.DeserializeObject< Customer >( jsonData );
 
@@ -69,7 +69,7 @@ namespace ThriveCart {
 
                 ++page;
 
-                string jsonData = await result.Content.ReadAsStringAsync( );
+                string jsonData = await result.Content.ReadAsStringAsync( cancellationToken );
 
                 var trd = Newtonsoft.Json.JsonConvert.DeserializeObject< TransactionDataResponse >( jsonData, settings );
 
@@ -133,32 +133,22 @@ namespace ThriveCart {
         }
 
         async Task< HttpResponseMessage > GetAsync( string target, CancellationToken cancellationToken = default ) {
+            await _activityLimiter.WaitAsync( cancellationToken );
+
             var result = await _httpClient.GetAsync( target, cancellationToken );
 
-            if( !result.IsSuccessStatusCode ) {
-                if( result.StatusCode == HttpStatusCode.TooManyRequests ) {
-                    await Task.Delay( _tooManyTriesDelay, cancellationToken );
-
-                    return await GetAsync( target, cancellationToken );
-                }
-
+            if( !result.IsSuccessStatusCode )
                 throw new Exception( $"{result.ReasonPhrase} - {result.StatusCode}" );
-            }
 
             return result;
         }
         async Task< HttpResponseMessage > PostAsync( string target, HttpContent content, CancellationToken cancellationToken = default ) {
+            await _activityLimiter.WaitAsync( cancellationToken );
+
             var result = await _httpClient.PostAsync( target, content, cancellationToken );
 
-            if( !result.IsSuccessStatusCode ) {
-                if( result.StatusCode == HttpStatusCode.TooManyRequests ) {
-                    await Task.Delay( _tooManyTriesDelay, cancellationToken );
-
-                    return await PostAsync( target, content, cancellationToken );
-                }
-
+            if( !result.IsSuccessStatusCode )
                 throw new Exception( $"{result.ReasonPhrase} - {result.StatusCode}" );
-            }
 
             return result;
         }
@@ -185,6 +175,7 @@ namespace ThriveCart {
             { TransactionType.Cancel, "&transactionType=cancel" },
         };
 
-        const int _tooManyTriesDelay = 10000;
+        // ThriveCart imposes a limit of 60 requests per minute
+        static ConcurrentLimitedTimedAccessResourceGuard _activityLimiter = new ConcurrentLimitedTimedAccessResourceGuard( 60, 60 * 1000 );
     }
 }
