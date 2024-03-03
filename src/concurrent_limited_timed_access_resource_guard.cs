@@ -1,50 +1,59 @@
 ﻿namespace ThriveCart {
     public class ConcurrentLimitedTimedAccessResourceGuard : IDisposable {
         public ConcurrentLimitedTimedAccessResourceGuard( int maxConcurrentAccesses, int accessLifeTimeMilliseconds ) {
-            _semaphore = new SemaphoreSlim( maxConcurrentAccesses );
+            _semaphore = new SemaphoreSlim( 1 );
             _accessLifeTimeMilliseconds = accessLifeTimeMilliseconds;
+
+            _lastQueriesTimeStamps = new DateTime[ maxConcurrentAccesses ];
         }
 
         public async Task WaitAsync( CancellationToken cancellationToken = default ) {
-            await _semaphore.WaitAsync( cancellationToken );
-            ++_usedResourcesCount;
+            try {
+                await _semaphore.WaitAsync( cancellationToken );
 
-            System.Diagnostics.Trace.WriteLine( $"Concurrent resources> Acquired (used '{_usedResourcesCount}')");
+                if( _lastQueriesTimeStampsCount > 0 && _lastQueriesTimeStampsCount == _maxConcurrentAccesses ) {
+                    var oldestTimeStamp = _lastQueriesTimeStamps[ 0 ];
+                    var diff = DateTime.Now - oldestTimeStamp;
+                    long milliseconds = diff.Ticks / TimeSpan.TicksPerMillisecond;
 
-            ScheduleSemaphoreRelease( );
-        }
+                    if( milliseconds < _accessLifeTimeMilliseconds ) {
+                        int remaining = _accessLifeTimeMilliseconds - ( int )milliseconds;
 
-        async void ScheduleSemaphoreRelease( ) {
-            async Task DoTheSchedule( ) {
-                await Task.Delay( _accessLifeTimeMilliseconds );
+                        await Task.Delay( remaining );
+                    }
 
-                --_usedResourcesCount;
+                    RemoveOldestTimeStamp( );
+                }
 
-                System.Diagnostics.Trace.WriteLine( $"Concurrent resources> Released (used '{_usedResourcesCount}')");
+                AddTimeStamp( );
 
+            } finally {
                 _semaphore.Release( );
+
             }
-
-            var task = DoTheSchedule( );
-            
-            _scheduledReleaseTasks.Add( task );
-
-            await task;
-
-            _scheduledReleaseTasks.Remove( task );
         }
 
+        void AddTimeStamp( ) {
+            _lastQueriesTimeStamps[ _lastQueriesTimeStampsCount ] = DateTime.Now;
 
-        async void IDisposable.Dispose( ) {
-            await Task.WhenAll( _scheduledReleaseTasks.ToArray( ) );
+            ++_lastQueriesTimeStampsCount;
+        }
 
+        void RemoveOldestTimeStamp( ) {
+            System.Array.Copy( _lastQueriesTimeStamps, 1, _lastQueriesTimeStamps, 0, _lastQueriesTimeStamps.Length - 1 );
+
+            --_lastQueriesTimeStampsCount;
+        }
+
+        void IDisposable.Dispose( ) {
             _semaphore.Dispose( );
         }
 
-        int _accessLifeTimeMilliseconds;
-        SemaphoreSlim _semaphore;
-        List< Task > _scheduledReleaseTasks = new List< Task >( );
+        int _maxConcurrentAccesses { get => _lastQueriesTimeStamps.Length; }
 
-        int _usedResourcesCount;
+        readonly int _accessLifeTimeMilliseconds;
+        SemaphoreSlim _semaphore;
+        DateTime [ ]_lastQueriesTimeStamps;
+        int _lastQueriesTimeStampsCount = 0;
     }
 }
