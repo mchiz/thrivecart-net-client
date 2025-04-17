@@ -9,7 +9,7 @@ namespace ThriveCart {
     public struct Customer {
         public struct CustomerData {
             public struct AddressData {
-                [ JsonProperty( "country" ) ] public string Country;
+                [ JsonProperty( "country" ) ] public string? Country;
             }
 
             [ JsonProperty( "name" ) ]       public string Name;

@@ -1,16 +1,26 @@
 ﻿using Newtonsoft.Json;
+using RestSharp;
 using System.Collections.Generic;
 using System.Net;
+using System.Net.Mail;
+using System.Text;
 using System.Web;
 using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace ThriveCart {
     public class Client : IDisposable {
+        public string ApiKey {
+            set {
+                _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue( "Bearer", value );
+            }
+        }
+
         public Client( string apiKey, ConnectionMode mode ) {
-            _httpClient.DefaultRequestHeaders.Add( "Authorization", "Bearer " + apiKey );
+            _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue( "Bearer", apiKey );
             _httpClient.DefaultRequestHeaders.Add( "X-TC-Mode", mode == ConnectionMode.Live ? "live" : "test" );
             _httpClient.DefaultRequestHeaders.Add( "X-TC-Sdk", _sdkVersion );
             _httpClient.DefaultRequestHeaders.Add( "X-TC-Version", _apiVersion );
+            _apiKey = apiKey;
         }
 
         public async Task< Customer > GetCustomerDataAsync( string emailAddress, CancellationToken cancellationToken = default ) {
@@ -116,7 +126,7 @@ namespace ThriveCart {
             return transactions.ToArray( );
         }
 
-        public async Task < Product[ ] > GetAllProductsAsync( CancellationToken cancellationToken = default ) {
+        public async Task< Product[ ] > GetAllProductsAsync( CancellationToken cancellationToken = default ) {
             string target = "https://thrivecart.com/api/external/products";
             
             using var result = await GetAsync( target, cancellationToken );
@@ -130,6 +140,49 @@ namespace ThriveCart {
 
             return Newtonsoft.Json.JsonConvert.DeserializeObject< Product[ ] >( jsonData, settings );
 
+        }
+
+        public async Task PauseSubscriptionAsync( int orderId, int subscriptionId, DateTime? autoResumeDateTime = null, CancellationToken cancellationToken = default ) {
+            using var client = new RestClient();
+            var request = new RestRequest("https://thrivecart.com/api/external/pauseSubscription",Method.Post);
+            request.AddHeader("X-TC-Mode", "live");
+            request.AddHeader( "Authorization", "Bearer " + _apiKey );
+            request.AddParameter("order_id",  orderId.ToString( ) );
+            request.AddParameter("subscription_id", subscriptionId.ToString( ) );
+            request.AddParameter("auto_resume", "");
+            var response = client.Execute(request);
+            
+            //string target = "https://thrivecart.com/api/external/pauseSubscription";
+
+            //KeyValuePair< string, string > ar;
+           
+            //if( autoResumeDateTime.HasValue ) {
+            //    var dto = new DateTimeOffset( autoResumeDateTime.Value );
+
+            //    long unixTimeStamp = dto.ToUnixTimeSeconds( );
+
+            //    ar = new KeyValuePair< string, string >( "auto_resume", unixTimeStamp.ToString( ) );
+
+            //} else {
+            //    ar = new KeyValuePair< string, string >( "auto_resume", "" );
+
+            //}
+
+            //var content = new FormUrlEncodedContent( new[ ] {
+            //    new KeyValuePair< string, string >( "order_id", orderId.ToString( ) ),
+            //    new KeyValuePair< string, string >( "subscription_id", subscriptionId.ToString( ) ),
+            //    ar,
+            //}  );
+
+            ////var content = new StringContent("order_id=851411&subscription_id=253&auto_resume=", Encoding.UTF8, "application/x-www-form-urlencoded");
+
+            //using var result = await PostAsync( target, content, cancellationToken );
+
+            //string jsonData = await result.Content.ReadAsStringAsync( cancellationToken );
+
+            //dynamic data = Newtonsoft.Json.JsonConvert.DeserializeObject( jsonData );
+
+            //int a = 0;
         }
 
         async Task< HttpResponseMessage > GetAsync( string target, CancellationToken cancellationToken = default ) {
@@ -177,5 +230,6 @@ namespace ThriveCart {
 
         // ThriveCart imposes a limit of 60 requests per minute
         static ConcurrentLimitedTimedAccessResourceGuard _activityLimiter = new ConcurrentLimitedTimedAccessResourceGuard( 60, 60 * 1000 );
+        string _apiKey;
     }
 }
